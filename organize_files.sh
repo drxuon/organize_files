@@ -62,6 +62,149 @@ declare -a DUPLICATE_FILES
 CHECKPOINT_FILE="/tmp/organize_files_checkpoint_$$"
 PROCESSED_FILES_LOG="/tmp/organize_files_processed_$$"
 
+# Hash cache for improved duplicate detection
+HASH_CACHE_FILE="/tmp/organize_files_hashes_$$"
+declare -A FILE_HASHES
+
+# Function to calculate file hash
+calculate_file_hash() {
+    local file_path="$1"
+    if [ ! -f "$file_path" ]; then
+        echo ""
+        return 1
+    fi
+    
+    # Use SHA256 for reliable duplicate detection
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$file_path" 2>/dev/null | cut -d' ' -f1
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$file_path" 2>/dev/null | cut -d' ' -f1
+    else
+        # Fallback to MD5 if SHA256 not available
+        if command -v md5sum >/dev/null 2>&1; then
+            md5sum "$file_path" 2>/dev/null | cut -d' ' -f1
+        elif command -v md5 >/dev/null 2>&1; then
+            md5 -q "$file_path" 2>/dev/null
+        else
+            echo ""
+            return 1
+        fi
+    fi
+}
+
+# Function to get or calculate file hash with caching
+get_file_hash() {
+    local file_path="$1"
+    local file_size file_mtime hash_key cached_hash
+    
+    if [ ! -f "$file_path" ]; then
+        echo ""
+        return 1
+    fi
+    
+    # Create hash key based on path, size, and modification time
+    file_size=$(stat -c %s "$file_path" 2>/dev/null)
+    file_mtime=$(stat -c %Y "$file_path" 2>/dev/null)
+    hash_key="${file_path}:${file_size}:${file_mtime}"
+    
+    # Check if hash is already cached
+    if [ -n "${FILE_HASHES[$hash_key]}" ]; then
+        echo "${FILE_HASHES[$hash_key]}"
+        return 0
+    fi
+    
+    # Calculate new hash
+    local file_hash
+    file_hash=$(calculate_file_hash "$file_path")
+    
+    if [ -n "$file_hash" ]; then
+        # Cache the hash
+        FILE_HASHES[$hash_key]="$file_hash"
+        echo "$file_hash"
+        return 0
+    else
+        echo ""
+        return 1
+    fi
+}
+
+# Function to load hash cache from file
+load_hash_cache() {
+    if [ -f "$HASH_CACHE_FILE" ] && [ "$DRY_RUN" = false ]; then
+        while IFS='=' read -r key value; do
+            if [ -n "$key" ] && [ -n "$value" ]; then
+                FILE_HASHES[$key]="$value"
+            fi
+        done < "$HASH_CACHE_FILE"
+    fi
+}
+
+# Function to save hash cache to file
+save_hash_cache() {
+    if [ "$DRY_RUN" = false ]; then
+        > "$HASH_CACHE_FILE"
+        for key in "${!FILE_HASHES[@]}"; do
+            echo "${key}=${FILE_HASHES[$key]}" >> "$HASH_CACHE_FILE"
+        done
+    fi
+}
+
+# Function to find duplicates by hash in destination directory
+find_duplicate_by_hash() {
+    local source_file="$1"
+    local source_hash="$2"
+    local search_dir="$3"
+    
+    if [ -z "$source_hash" ] || [ ! -d "$search_dir" ]; then
+        echo ""
+        return 1
+    fi
+    
+    # Search for files with same hash in destination
+    find "$search_dir" -type f \( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" -o -iname "*.gif" -o -iname "*.bmp" -o -iname "*.tiff" -o -iname "*.mp4" -o -iname "*.avi" -o -iname "*.mov" -o -iname "*.mkv" -o -iname "*.wmv" -o -iname "*.mp3" -o -iname "*.wav" -o -iname "*.flac" \) -print0 | while IFS= read -r -d '' existing_file; do
+        local existing_hash
+        existing_hash=$(get_file_hash "$existing_file")
+        
+        if [ "$existing_hash" = "$source_hash" ]; then
+            echo "$existing_file"
+            return 0
+        fi
+    done
+    
+    echo ""
+    return 1
+}
+
+# Function to check if two files are duplicates using size and hash
+are_files_duplicate() {
+    local file1="$1"
+    local file2="$2"
+    
+    if [ ! -f "$file1" ] || [ ! -f "$file2" ]; then
+        return 1
+    fi
+    
+    # Quick size check first
+    local size1 size2
+    size1=$(stat -c %s "$file1" 2>/dev/null)
+    size2=$(stat -c %s "$file2" 2>/dev/null)
+    
+    if [ "$size1" != "$size2" ]; then
+        return 1  # Different sizes, definitely not duplicates
+    fi
+    
+    # If sizes match, compare hashes
+    local hash1 hash2
+    hash1=$(get_file_hash "$file1")
+    hash2=$(get_file_hash "$file2")
+    
+    if [ -n "$hash1" ] && [ -n "$hash2" ] && [ "$hash1" = "$hash2" ]; then
+        return 0  # Files are duplicates
+    else
+        return 1  # Files are different or hash calculation failed
+    fi
+}
+
 # Function to load existing checkpoint
 load_checkpoint() {
     if [ -f "$CHECKPOINT_FILE" ] && [ "$DRY_RUN" = false ]; then
@@ -82,6 +225,14 @@ load_checkpoint() {
             echo ""
             echo "Resuming processing..."
         fi
+        
+        # Load hash cache for improved duplicate detection
+        load_hash_cache
+        if [ -f "$HASH_CACHE_FILE" ]; then
+            cached_hashes=$(wc -l < "$HASH_CACHE_FILE")
+            echo "- Cached file hashes loaded: $cached_hashes"
+        fi
+        
         echo "----------------------------------------"
     elif [ -f "$CHECKPOINT_FILE" ] && [ "$DRY_RUN" = true ]; then
         echo "ℹ️  Existing checkpoint ignored in dry-run mode"
@@ -98,6 +249,9 @@ ERRORS=$ERRORS
 DUPLICATES_FOUND=$DUPLICATES_FOUND
 declare -a DUPLICATE_FILES=($(printf "'%s' " "${DUPLICATE_FILES[@]}"))
 EOF
+        
+        # Also save hash cache for performance
+        save_hash_cache
     fi
 }
 
@@ -154,7 +308,7 @@ cleanup() {
     echo "$0 \"$SOURCE_DIR\" \"$DEST_DIR\""
     echo ""
     echo "To restart from scratch, first delete checkpoint files:"
-    echo "rm -f \"$CHECKPOINT_FILE\" \"$PROCESSED_FILES_LOG\""
+    echo "rm -f \"$CHECKPOINT_FILE\" \"$PROCESSED_FILES_LOG\" \"$HASH_CACHE_FILE\""
     
     exit 1
 }
@@ -176,6 +330,16 @@ echo "----------------------------------------"
 
 # Load checkpoint if existing
 load_checkpoint
+
+# Load hash cache for improved duplicate detection (if not already loaded by checkpoint)
+if [ "${#FILE_HASHES[@]}" -eq 0 ]; then
+    load_hash_cache
+    if [ -f "$HASH_CACHE_FILE" ] && [ "$DRY_RUN" = false ]; then
+        cached_hashes=$(wc -l < "$HASH_CACHE_FILE")
+        echo "Hash cache loaded: $cached_hashes entries"
+        echo "----------------------------------------"
+    fi
+fi
 
 # Count files to process
 echo "Counting files to process..."
@@ -327,92 +491,118 @@ for file in "${files_array[@]}"; do
                 fi
             fi
             
-            # Check if file already exists in destination
-            if [ -f "$dest_file" ] || ( [ "$DRY_RUN" = true ] && [ -f "$dest_file" ] ); then
-                # Simulate file existence check in dry-run too
-                file_exists=false
-                files_identical=false
+            # Advanced duplicate detection using hash comparison
+            source_hash=""
+            duplicate_found=false
+            duplicate_location=""
+            
+            if [ "$DRY_RUN" = false ]; then
+                # Calculate hash of source file
+                source_hash=$(get_file_hash "$file")
                 
-                if [ -f "$dest_file" ]; then
-                    file_exists=true
-                    if cmp -s "$file" "$dest_file" 2>/dev/null; then
-                        files_identical=true
+                if [ -n "$source_hash" ]; then
+                    # First check if identical file already exists in exact destination
+                    if [ -f "$dest_file" ]; then
+                        if are_files_duplicate "$file" "$dest_file"; then
+                            duplicate_found=true
+                            duplicate_location="$dest_file"
+                            echo "  Identical file found in exact destination: $(basename "$dest_file")"
+                        fi
                     fi
-                elif [ "$DRY_RUN" = true ]; then
-                    # In dry-run, randomly simulate file existence for demo
-                    if (( RANDOM % 4 == 0 )); then  # 25% probability of existing file
-                        file_exists=true
-                        if (( RANDOM % 2 == 0 )); then  # 50% probability of identical file
-                            files_identical=true
+                    
+                    # If not found in exact location, search entire destination directory for duplicates
+                    if [ "$duplicate_found" = false ]; then
+                        echo "  Scanning destination directory for duplicates..."
+                        duplicate_file=$(find_duplicate_by_hash "$file" "$source_hash" "$DEST_DIR")
+                        if [ -n "$duplicate_file" ]; then
+                            duplicate_found=true
+                            duplicate_location="$duplicate_file"
+                            echo "  Duplicate found elsewhere in destination: $duplicate_file"
                         fi
                     fi
                 fi
-                
-                if [ "$file_exists" = true ] && [ "$files_identical" = true ]; then
-                    echo "  Identical file found in destination, renaming source with _DUP"
-                    base_name="${filename%.*}"
-                    extension="${filename##*.}"
-                    
-                    # Find free name for duplicate in source directory
-                    dup_counter=1
-                    dup_name="${base_name}_DUP"
-                    if [ -n "$extension" ]; then
-                        dup_filename="${dup_name}.$extension"
+            else
+                # In dry-run, simulate duplicate detection for demo
+                if (( RANDOM % 6 == 0 )); then  # ~17% probability of finding duplicate
+                    duplicate_found=true
+                    if [ -f "$dest_file" ]; then
+                        duplicate_location="$dest_file"
+                        echo "  [DRY-RUN] Would find identical file in exact destination"
                     else
-                        dup_filename="$dup_name"
+                        duplicate_location="$DEST_DIR/$(date +%Y)/$(printf "%02d" $((1 + RANDOM % 12)))/simulated_duplicate.jpg"
+                        echo "  [DRY-RUN] Would find duplicate elsewhere in destination"
                     fi
-                    
-                    dup_path="$(dirname "$file")/$dup_filename"
-                    
-                    if [ "$DRY_RUN" = false ]; then
-                        while [ -f "$dup_path" ]; do
-                            dup_name="${base_name}_DUP$dup_counter"
-                            if [ -n "$extension" ]; then
-                                dup_filename="${dup_name}.$extension"
-                            else
-                                dup_filename="$dup_name"
-                            fi
-                            dup_path="$(dirname "$file")/$dup_filename"
-                            ((dup_counter++))
-                        done
-                        
-                        # Rename file in source directory
-                        if mv "$file" "$dup_path"; then
-                            echo "  File renamed as duplicate: $dup_filename"
-                            DUPLICATE_FILES+=("$dup_filename")
-                            ((DUPLICATES_FOUND++))
-                            mark_file_processed "$file"
-                            save_checkpoint
+                fi
+            fi
+            
+            # Handle duplicate files
+            if [ "$duplicate_found" = true ]; then
+                echo "  Duplicate file detected - renaming source with _DUP suffix"
+                base_name="${filename%.*}"
+                extension="${filename##*.}"
+                
+                # Find free name for duplicate in source directory
+                dup_counter=1
+                dup_name="${base_name}_DUP"
+                if [ -n "$extension" ]; then
+                    dup_filename="${dup_name}.$extension"
+                else
+                    dup_filename="$dup_name"
+                fi
+                
+                dup_path="$(dirname "$file")/$dup_filename"
+                
+                if [ "$DRY_RUN" = false ]; then
+                    while [ -f "$dup_path" ]; do
+                        dup_name="${base_name}_DUP$dup_counter"
+                        if [ -n "$extension" ]; then
+                            dup_filename="${dup_name}.$extension"
                         else
-                            echo "  ERROR renaming duplicate"
-                            ((ERRORS++))
-                            mark_file_processed "$file"
-                            save_checkpoint
+                            dup_filename="$dup_name"
                         fi
-                    else
-                        echo "  [DRY-RUN] Would rename file as duplicate: $dup_filename"
+                        dup_path="$(dirname "$file")/$dup_filename"
+                        ((dup_counter++))
+                    done
+                    
+                    # Rename file in source directory
+                    if mv "$file" "$dup_path"; then
+                        echo "  File renamed as duplicate: $dup_filename"
+                        echo "  Original duplicate is at: $duplicate_location"
                         DUPLICATE_FILES+=("$dup_filename")
                         ((DUPLICATES_FOUND++))
+                        mark_file_processed "$file"
+                        save_checkpoint
+                    else
+                        echo "  ERROR renaming duplicate"
+                        ((ERRORS++))
+                        mark_file_processed "$file"
+                        save_checkpoint
                     fi
-                    continue
-                    
-                elif [ "$file_exists" = true ]; then
-                    # Different file with same name - create numbered version in destination
-                    counter=1
-                    base_name="${filename%.*}"
-                    extension="${filename##*.}"
-                    
-                    if [ "$DRY_RUN" = false ]; then
-                        while [ -f "$dest_dir/${base_name}_$counter.$extension" ]; do
-                            ((counter++))
-                        done
-                    fi
-                    
-                    dest_file="$dest_dir/${base_name}_$counter.$extension"
-                    echo "  Different file with same name, renamed to: ${base_name}_$counter.$extension"
-                    if [ "$DRY_RUN" = true ]; then
-                        echo "  [DRY-RUN] Would create file with modified name"
-                    fi
+                else
+                    echo "  [DRY-RUN] Would rename file as duplicate: $dup_filename"
+                    echo "  [DRY-RUN] Original would be at: $duplicate_location"
+                    DUPLICATE_FILES+=("$dup_filename")
+                    ((DUPLICATES_FOUND++))
+                fi
+                continue
+            fi
+            
+            # Check if destination file exists but is different (handle name conflicts)
+            if [ -f "$dest_file" ] && [ "$duplicate_found" = false ]; then
+                counter=1
+                base_name="${filename%.*}"
+                extension="${filename##*.}"
+                
+                if [ "$DRY_RUN" = false ]; then
+                    while [ -f "$dest_dir/${base_name}_$counter.$extension" ]; do
+                        ((counter++))
+                    done
+                fi
+                
+                dest_file="$dest_dir/${base_name}_$counter.$extension"
+                echo "  Different file with same name, creating: ${base_name}_$counter.$extension"
+                if [ "$DRY_RUN" = true ]; then
+                    echo "  [DRY-RUN] Would create file with modified name"
                 fi
             fi
             
@@ -618,6 +808,9 @@ else
     fi
     if [ -f "$PROCESSED_FILES_LOG" ]; then
         rm -f "$PROCESSED_FILES_LOG"
+    fi
+    if [ -f "$HASH_CACHE_FILE" ]; then
+        rm -f "$HASH_CACHE_FILE"
     fi
     echo ""
     echo "🎉 Checkpoint files cleaned - operation completed!"

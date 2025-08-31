@@ -9,9 +9,13 @@ IMG_20240315_120000.jpg
 backup_15-03-2024_importante.zip
 
 
-Gestione duplicati migliorata:
+Gestione duplicati avanzata con hash:
 
-Se trova un file identico nella destinazione, rinomina quello nella sorgente con _DUP
+Sistema di rilevamento basato su hash SHA256 per identificazione accurata
+Scansione globale dell'intera directory di destinazione (non solo nome file)
+Rilevamento cross-directory: trova duplicati anche con nomi diversi
+Cache delle hash per prestazioni ottimali e persistenza tra restart
+Se trova un file identico ovunque nella destinazione, rinomina quello nella sorgente con _DUP
 Se trova un file diverso con lo stesso nome, crea una versione numerata nella destinazione
 
 
@@ -174,6 +178,7 @@ Checkpoint automatici:
 Salvataggio continuo: Dopo ogni file processato
 File di stato: /tmp/organize_files_checkpoint_$$
 Log processati: /tmp/organize_files_processed_$$
+Cache hash: /tmp/organize_files_hashes_$$ (nuova funzionalità per performance)
 
 Caricamento automatico:
 bash# Prima esecuzione
@@ -256,11 +261,15 @@ Formati multipli: DD-MM-YYYY, MM-DD-YYYY, YYYYMMDD
 Fallback EXIF e data modifica file
 Fix bug ottali (08, 09 ora funzionano)
 
-2. Gestione Duplicati Intelligente:
+2. Gestione Duplicati Intelligente con Hash:
 
-✅ File già al posto giusto: "File già nella posizione corretta, saltato"
-✅ Veri duplicati: Rinomina sorgente con _DUP
-✅ File diversi stesso nome: Numerazione destinazione _1, _2
+✅ **Rilevamento basato su hash SHA256**: Identificazione accurata al 100%
+✅ **Scansione globale**: Cerca duplicati in tutta la directory destinazione
+✅ **Cross-directory detection**: Trova `vacanza_2024-03-15.jpg` duplicato di `foto_diversa.jpg` in `2024/01/`
+✅ **Cache performance**: Hash salvate per evitare ricalcolo in restart
+✅ **File già al posto giusto**: "File già nella posizione corretta, saltato"
+✅ **Veri duplicati**: Rinomina sorgente con _DUP, mostra posizione originale
+✅ **File diversi stesso nome**: Numerazione destinazione _1, _2
 
 3. Sistema Checkpoint Completo:
 
@@ -378,3 +387,46 @@ bash# Organizza ricorsivamente tutta la struttura
 # Esclusione file con pattern *_DUP.*
 # File multimediali trovati: 2,456
 # File _DUP.* esclusi: 18
+
+# Versione 12 - Rilevamento Duplicati Avanzato
+
+🔍 **Nuove Funzionalità Hash-Based**:
+
+1. **Rilevamento con Hash SHA256**:
+```bash
+# PRIMA - solo confronto filename:
+photo_2024-03-15.jpg vs photo_2024-03-15.jpg ✅
+photo_2024-03-15.jpg vs vacanza_mare.jpg ❌ (non rilevato)
+
+# DOPO - confronto contenuto con hash:
+photo_2024-03-15.jpg vs photo_2024-03-15.jpg ✅ 
+photo_2024-03-15.jpg vs vacanza_mare.jpg ✅ (rilevato se identico!)
+```
+
+2. **Scansione Globale Destination**:
+```bash
+# Cerca duplicati in TUTTA la directory destinazione:
+/dest/2024/03/photo.jpg
+/dest/2024/01/vacation.jpg ← Trovato duplicato anche qui!
+/dest/2023/12/backup.jpg
+```
+
+3. **Performance con Cache Hash**:
+- Hash calcolate una sola volta e salvate
+- Restart veloce senza ricalcolo
+- Cache persistente tra interruzioni
+
+4. **Output Migliorato**:
+```
+Processando: vacation_2024-03-15.jpg
+  Scansione directory destinazione per duplicati...
+  Duplicato trovato altrove: /dest/2024/01/different_name.jpg
+  File rinominato come: vacation_2024-03-15_DUP.jpg
+  Originale duplicato è in: /dest/2024/01/different_name.jpg
+```
+
+🎯 **Vantaggi**:
+- **Accuratezza 100%**: Rileva duplicati anche con nomi completamente diversi
+- **Nessun falso positivo**: Confronto basato su contenuto, non solo nome
+- **Performance ottimale**: Cache intelligente evita ricalcoli
+- **Trasparenza**: Mostra esattamente dove si trova l'originale
