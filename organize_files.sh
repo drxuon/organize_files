@@ -442,18 +442,10 @@ while IFS= read -r -d '' file; do
             echo "  Data non valida estratta: $year-$month_formatted, saltato"
             if [ "$DRY_RUN" = true ]; then
                 echo "  [DRY-RUN] File non verrebbe spostato"
-                source "$TEMP_COUNTERS"
-                ((SKIPPED++))
-                echo "MOVED=$MOVED" > "$TEMP_COUNTERS"
-                echo "SKIPPED=$SKIPPED" >> "$TEMP_COUNTERS"
-                echo "ERRORS=$ERRORS" >> "$TEMP_COUNTERS"
-                echo "DUPLICATES_FOUND=$DUPLICATES_FOUND" >> "$TEMP_COUNTERS"
-                printf "DUPLICATE_FILES=(" >> "$TEMP_COUNTERS"
-                printf "'%s' " "${DUPLICATE_FILES[@]}" >> "$TEMP_COUNTERS"
-                printf ")\n" >> "$TEMP_COUNTERS"
-            else
-                ((SKIPPED++))
-                mark_file_processed "$file"
+            fi
+            ((SKIPPED++))
+            mark_file_processed "$file"
+            if [ "$DRY_RUN" = false ]; then
                 save_checkpoint
             fi
         fi
@@ -461,38 +453,23 @@ while IFS= read -r -d '' file; do
         echo "  Data non valida estratta: $year-$month, saltato"
         if [ "$DRY_RUN" = true ]; then
             echo "  [DRY-RUN] File non verrebbe spostato"
-            source "$TEMP_COUNTERS"
-            ((SKIPPED++))
-            echo "MOVED=$MOVED" > "$TEMP_COUNTERS"
-            echo "SKIPPED=$SKIPPED" >> "$TEMP_COUNTERS"
-            echo "ERRORS=$ERRORS" >> "$TEMP_COUNTERS"
-            echo "DUPLICATES_FOUND=$DUPLICATES_FOUND" >> "$TEMP_COUNTERS"
-            printf "DUPLICATE_FILES=(" >> "$TEMP_COUNTERS"
-            printf "'%s' " "${DUPLICATE_FILES[@]}" >> "$TEMP_COUNTERS"
-            printf ")\n" >> "$TEMP_COUNTERS"
-        else
-            ((SKIPPED++))
-            mark_file_processed "$file"
+        fi
+        ((SKIPPED++))
+        mark_file_processed "$file"
+        if [ "$DRY_RUN" = false ]; then
             save_checkpoint
         fi
     fi
     
     echo ""
     
-    # Mostra progresso ogni 50 file processati (solo in modalità normale)
-    if [ "$DRY_RUN" = false ]; then
-        total_processed=$((MOVED + SKIPPED + ERRORS + DUPLICATES_FOUND))
-        if (( total_processed % 50 == 0 )) && (( total_processed > 0 )); then
-            echo "--- PROGRESSO: $total_processed file processati ---"
-            echo "    (Spostati: $MOVED | Saltati: $SKIPPED | Duplicati: $DUPLICATES_FOUND | Errori: $ERRORS)"
-        fi
+    # Mostra progresso ogni 50 file processati
+    total_processed=$((MOVED + SKIPPED + ERRORS + DUPLICATES_FOUND))
+    if (( total_processed % 50 == 0 )) && (( total_processed > 0 )); then
+        echo "--- PROGRESSO: $total_processed file processati ---"
+        echo "    (Spostati: $MOVED | Saltati: $SKIPPED | Duplicati: $DUPLICATES_FOUND | Errori: $ERRORS)"
     fi
-done < <(find "$SOURCE_DIR" -type f \( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" -o -iname "*.gif" -o -iname "*.bmp" -o -iname "*.tiff" -o -iname "*.mp4" -o -iname "*.avi" -o -iname "*.mov" -o -iname "*.mkv" -o -iname "*.wmv" -o -iname "*.mp3" -o -iname "*.wav" -o -iname "*.flac" \) ! -name "*_DUP.*" -print0)
-
-# Carica i contatori finali in modalità dry-run
-if [ "$DRY_RUN" = true ] && [ -f "$TEMP_COUNTERS" ]; then
-    source "$TEMP_COUNTERS"
-fi
+done
 
 echo "----------------------------------------"
 
@@ -649,11 +626,6 @@ else
     fi
     echo ""
     echo "🎉 File di checkpoint puliti - operazione completata!"
-fi
-
-# Pulizia file temporanei
-if [ "$DRY_RUN" = true ] && [ -f "$TEMP_COUNTERS" ]; then
-    rm -f "$TEMP_COUNTERS"
 fi
 
 # Rimuovi il trap alla fine
