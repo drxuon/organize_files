@@ -49,6 +49,9 @@ if [ "$DRY_RUN" = false ]; then
     mkdir -p "$DEST_DIR"
 fi
 
+# Set database file location after DEST_DIR is defined
+DB_FILE="$DEST_DIR/.file_hashes.db"
+
 # Counters for statistics
 MOVED=0
 SKIPPED=0
@@ -62,9 +65,8 @@ declare -a DUPLICATE_FILES
 CHECKPOINT_FILE="/tmp/organize_files_checkpoint_$$"
 PROCESSED_FILES_LOG="/tmp/organize_files_processed_$$"
 
-# Hash cache for improved duplicate detection
-HASH_CACHE_FILE="/tmp/organize_files_hashes_$$"
-declare -A FILE_HASHES
+# SQLite database for duplicate detection
+DB_FILE=""  # Will be set after DEST_DIR is defined
 
 # Function to calculate file hash
 calculate_file_hash() {
@@ -92,84 +94,67 @@ calculate_file_hash() {
     fi
 }
 
-# Function to get or calculate file hash with caching
+# Function to get file hash (calculate directly for source files)
 get_file_hash() {
     local file_path="$1"
-    local file_size file_mtime hash_key cached_hash
     
     if [ ! -f "$file_path" ]; then
         echo ""
         return 1
     fi
     
-    # Create hash key based on path, size, and modification time
-    file_size=$(stat -c %s "$file_path" 2>/dev/null)
-    file_mtime=$(stat -c %Y "$file_path" 2>/dev/null)
-    hash_key="${file_path}:${file_size}:${file_mtime}"
-    
-    # Check if hash is already cached
-    if [ -n "${FILE_HASHES[$hash_key]}" ]; then
-        echo "${FILE_HASHES[$hash_key]}"
-        return 0
-    fi
-    
-    # Calculate new hash
-    local file_hash
-    file_hash=$(calculate_file_hash "$file_path")
-    
-    if [ -n "$file_hash" ]; then
-        # Cache the hash
-        FILE_HASHES[$hash_key]="$file_hash"
-        echo "$file_hash"
-        return 0
-    else
-        echo ""
+    calculate_file_hash "$file_path"
+}
+
+# Function to check if SQLite database exists and is accessible
+check_hash_database() {
+    if [ ! -f "$DB_FILE" ]; then
         return 1
     fi
-}
-
-# Function to load hash cache from file
-load_hash_cache() {
-    if [ -f "$HASH_CACHE_FILE" ] && [ "$DRY_RUN" = false ]; then
-        while IFS='=' read -r key value; do
-            if [ -n "$key" ] && [ -n "$value" ]; then
-                FILE_HASHES[$key]="$value"
-            fi
-        done < "$HASH_CACHE_FILE"
+    
+    # Test database accessibility
+    if ! sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM file_hashes;" >/dev/null 2>&1; then
+        return 1
     fi
+    
+    return 0
 }
 
-# Function to save hash cache to file
-save_hash_cache() {
-    if [ "$DRY_RUN" = false ]; then
-        > "$HASH_CACHE_FILE"
-        for key in "${!FILE_HASHES[@]}"; do
-            echo "${key}=${FILE_HASHES[$key]}" >> "$HASH_CACHE_FILE"
-        done
-    fi
-}
-
-# Function to find duplicates by hash in destination directory
+# Function to find duplicate by hash using SQLite database
 find_duplicate_by_hash() {
     local source_file="$1"
     local source_hash="$2"
     local search_dir="$3"
     
-    if [ -z "$source_hash" ] || [ ! -d "$search_dir" ]; then
+    if [ -z "$source_hash" ]; then
         echo ""
         return 1
     fi
     
-    # Search for files with same hash in destination
-    find "$search_dir" -type f \( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" -o -iname "*.gif" -o -iname "*.bmp" -o -iname "*.tiff" -o -iname "*.mp4" -o -iname "*.avi" -o -iname "*.mov" -o -iname "*.mkv" -o -iname "*.wmv" -o -iname "*.mp3" -o -iname "*.wav" -o -iname "*.flac" \) -print0 | while IFS= read -r -d '' existing_file; do
-        local existing_hash
-        existing_hash=$(get_file_hash "$existing_file")
+    # Try database lookup first
+    if check_hash_database; then
+        local duplicate_file
+        duplicate_file=$(sqlite3 "$DB_FILE" "SELECT file_path FROM file_hashes WHERE file_hash = '$source_hash' LIMIT 1;" 2>/dev/null)
         
-        if [ "$existing_hash" = "$source_hash" ]; then
-            echo "$existing_file"
+        # Verify the file still exists
+        if [ -n "$duplicate_file" ] && [ -f "$duplicate_file" ]; then
+            echo "$duplicate_file"
             return 0
         fi
-    done
+    fi
+    
+    # Fallback to directory scan if database not available
+    if [ -d "$search_dir" ]; then
+        find "$search_dir" -type f \( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" -o -iname "*.gif" -o -iname "*.bmp" -o -iname "*.tiff" -o -iname "*.mp4" -o -iname "*.avi" -o -iname "*.mov" -o -iname "*.mkv" -o -iname "*.wmv" -o -iname "*.mp3" -o -iname "*.wav" -o -iname "*.flac" \) -print0 | while IFS= read -r -d '' existing_file; do
+            local existing_hash
+            existing_hash=$(get_file_hash "$existing_file")
+            
+            if [ "$existing_hash" = "$source_hash" ]; then
+                echo "$existing_file"
+                return 0
+            fi
+        done
+    fi
     
     echo ""
     return 1
@@ -226,11 +211,10 @@ load_checkpoint() {
             echo "Resuming processing..."
         fi
         
-        # Load hash cache for improved duplicate detection
-        load_hash_cache
-        if [ -f "$HASH_CACHE_FILE" ]; then
-            cached_hashes=$(wc -l < "$HASH_CACHE_FILE")
-            echo "- Cached file hashes loaded: $cached_hashes"
+        # Check hash database availability
+        if check_hash_database; then
+            db_entries=$(sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM file_hashes;" 2>/dev/null)
+            echo "- Hash database entries available: $db_entries"
         fi
         
         echo "----------------------------------------"
@@ -250,8 +234,7 @@ DUPLICATES_FOUND=$DUPLICATES_FOUND
 declare -a DUPLICATE_FILES=($(printf "'%s' " "${DUPLICATE_FILES[@]}"))
 EOF
         
-        # Also save hash cache for performance
-        save_hash_cache
+        # Hash database is persistent, no need to save cache
     fi
 }
 
@@ -308,7 +291,7 @@ cleanup() {
     echo "$0 \"$SOURCE_DIR\" \"$DEST_DIR\""
     echo ""
     echo "To restart from scratch, first delete checkpoint files:"
-    echo "rm -f \"$CHECKPOINT_FILE\" \"$PROCESSED_FILES_LOG\" \"$HASH_CACHE_FILE\""
+    echo "rm -f \"$CHECKPOINT_FILE\" \"$PROCESSED_FILES_LOG\""
     
     exit 1
 }
@@ -331,15 +314,16 @@ echo "----------------------------------------"
 # Load checkpoint if existing
 load_checkpoint
 
-# Load hash cache for improved duplicate detection (if not already loaded by checkpoint)
-if [ "${#FILE_HASHES[@]}" -eq 0 ]; then
-    load_hash_cache
-    if [ -f "$HASH_CACHE_FILE" ] && [ "$DRY_RUN" = false ]; then
-        cached_hashes=$(wc -l < "$HASH_CACHE_FILE")
-        echo "Hash cache loaded: $cached_hashes entries"
-        echo "----------------------------------------"
-    fi
+# Check hash database availability for improved performance
+if check_hash_database && [ "$DRY_RUN" = false ]; then
+    db_entries=$(sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM file_hashes;" 2>/dev/null)
+    echo "Hash database available: $db_entries entries"
+else
+    echo "Warning: Hash database not found at $DB_FILE"
+    echo "         Run ./build_hash_database.sh first for optimal performance"
+    echo "         Falling back to direct file scanning..."
 fi
+echo "----------------------------------------"
 
 # Count files to process
 echo "Counting files to process..."
@@ -510,14 +494,18 @@ for file in "${files_array[@]}"; do
                         fi
                     fi
                     
-                    # If not found in exact location, search entire destination directory for duplicates
+                    # If not found in exact location, search database for duplicates
                     if [ "$duplicate_found" = false ]; then
-                        echo "  Scanning destination directory for duplicates..."
+                        if check_hash_database; then
+                            echo "  Checking database for duplicates..."
+                        else
+                            echo "  Scanning destination directory for duplicates..."
+                        fi
                         duplicate_file=$(find_duplicate_by_hash "$file" "$source_hash" "$DEST_DIR")
                         if [ -n "$duplicate_file" ]; then
                             duplicate_found=true
                             duplicate_location="$duplicate_file"
-                            echo "  Duplicate found elsewhere in destination: $duplicate_file"
+                            echo "  Duplicate found: $duplicate_file"
                         fi
                     fi
                 fi
@@ -809,9 +797,7 @@ else
     if [ -f "$PROCESSED_FILES_LOG" ]; then
         rm -f "$PROCESSED_FILES_LOG"
     fi
-    if [ -f "$HASH_CACHE_FILE" ]; then
-        rm -f "$HASH_CACHE_FILE"
-    fi
+    # Hash database is persistent and maintained separately
     echo ""
     echo "🎉 Checkpoint files cleaned - operation completed!"
 fi
