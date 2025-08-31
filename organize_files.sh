@@ -1,13 +1,13 @@
 #!/bin/bash
 
-# Script per organizzare file multimediali in struttura anno/mese
-# Uso: ./organize_files.sh /path/to/source /path/to/destination [--dry-run]
+# Script to organize multimedia files in year/month structure
+# Usage: ./organize_files.sh /path/to/source /path/to/destination [--dry-run]
 
 SOURCE_DIR=""
 DEST_DIR=""
 DRY_RUN=false
 
-# Analizza i parametri
+# Parse parameters
 while [[ $# -gt 0 ]]; do
     case $1 in
         --dry-run)
@@ -20,8 +20,8 @@ while [[ $# -gt 0 ]]; do
             elif [ -z "$DEST_DIR" ]; then
                 DEST_DIR="$1"
             else
-                echo "Errore: Troppi parametri"
-                echo "Uso: $0 <directory_sorgente> <directory_destinazione> [--dry-run]"
+                echo "Error: Too many parameters"
+                echo "Usage: $0 <source_directory> <destination_directory> [--dry-run]"
                 exit 1
             fi
             shift
@@ -29,66 +29,66 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Controlla che siano stati forniti i parametri obbligatori
+# Check that required parameters have been provided
 if [ -z "$SOURCE_DIR" ] || [ -z "$DEST_DIR" ]; then
-    echo "Uso: $0 <directory_sorgente> <directory_destinazione> [--dry-run]"
+    echo "Usage: $0 <source_directory> <destination_directory> [--dry-run]"
     echo ""
-    echo "Opzioni:"
-    echo "  --dry-run    Simula l'esecuzione senza effettuare modifiche reali"
+    echo "Options:"
+    echo "  --dry-run    Simulate execution without making real changes"
     exit 1
 fi
 
-# Controlla che le directory esistano
+# Check that directories exist
 if [ ! -d "$SOURCE_DIR" ]; then
-    echo "Errore: Directory sorgente non trovata: $SOURCE_DIR"
+    echo "Error: Source directory not found: $SOURCE_DIR"
     exit 1
 fi
 
-# Crea la directory destinazione se non esiste
+# Create destination directory if it doesn't exist
 if [ "$DRY_RUN" = false ]; then
     mkdir -p "$DEST_DIR"
 fi
 
-# Contatori per statistiche
+# Counters for statistics
 MOVED=0
 SKIPPED=0
 ERRORS=0
 DUPLICATES_FOUND=0
 
-# Array per tenere traccia dei duplicati
+# Array to track duplicates
 declare -a DUPLICATE_FILES
 
-# File di checkpoint per restart intelligente
+# Checkpoint files for intelligent restart
 CHECKPOINT_FILE="/tmp/organize_files_checkpoint_$$"
 PROCESSED_FILES_LOG="/tmp/organize_files_processed_$$"
 
-# Funzione per caricare checkpoint esistente
+# Function to load existing checkpoint
 load_checkpoint() {
     if [ -f "$CHECKPOINT_FILE" ] && [ "$DRY_RUN" = false ]; then
         echo "=========================================="
-        echo "CHECKPOINT TROVATO - CARICAMENTO DATI"
+        echo "CHECKPOINT FOUND - LOADING DATA"
         echo "=========================================="
         source "$CHECKPOINT_FILE"
-        echo "Caricati dati sessione precedente:"
-        echo "- File già spostati: $MOVED"
-        echo "- File già saltati: $SKIPPED"  
-        echo "- Duplicati già trovati: $DUPLICATES_FOUND"
-        echo "- Errori precedenti: $ERRORS"
+        echo "Loaded previous session data:"
+        echo "- Files already moved: $MOVED"
+        echo "- Files already skipped: $SKIPPED"  
+        echo "- Duplicates already found: $DUPLICATES_FOUND"
+        echo "- Previous errors: $ERRORS"
         echo ""
         
         if [ -f "$PROCESSED_FILES_LOG" ]; then
             processed_count=$(wc -l < "$PROCESSED_FILES_LOG")
-            echo "- File già processati: $processed_count"
+            echo "- Files already processed: $processed_count"
             echo ""
-            echo "Riprendendo l'elaborazione..."
+            echo "Resuming processing..."
         fi
         echo "----------------------------------------"
     elif [ -f "$CHECKPOINT_FILE" ] && [ "$DRY_RUN" = true ]; then
-        echo "ℹ️  Checkpoint esistente ignorato in modalità dry-run"
+        echo "ℹ️  Existing checkpoint ignored in dry-run mode"
     fi
 }
 
-# Funzione per salvare checkpoint
+# Function to save checkpoint
 save_checkpoint() {
     if [ "$DRY_RUN" = false ]; then
         cat > "$CHECKPOINT_FILE" << EOF
@@ -101,17 +101,17 @@ EOF
     fi
 }
 
-# Funzione per verificare se un file è già stato processato
+# Function to check if a file has already been processed
 is_file_processed() {
     local file_path="$1"
     if [ -f "$PROCESSED_FILES_LOG" ] && [ "$DRY_RUN" = false ]; then
         grep -Fxq "$file_path" "$PROCESSED_FILES_LOG" 2>/dev/null
     else
-        return 1  # File non processato
+        return 1  # File not processed
     fi
 }
 
-# Funzione per marcare un file come processato
+# Function to mark a file as processed
 mark_file_processed() {
     local file_path="$1"
     if [ "$DRY_RUN" = false ]; then
@@ -119,212 +119,207 @@ mark_file_processed() {
     fi
 }
 
-# Gestione interruzioni (Ctrl+C)
+# Handle interruptions (Ctrl+C)
 cleanup() {
     echo ""
     echo "=========================================="
-    echo "INTERRUZIONE RILEVATA - SALVATAGGIO STATO"
+    echo "INTERRUPTION DETECTED - SAVING STATE"
     echo "=========================================="
     
-    # Salva checkpoint finale
+    # Save final checkpoint
     save_checkpoint
     
-    echo "Operazione interrotta dall'utente"
+    echo "Operation interrupted by user"
     echo ""
-    echo "STATISTICHE PARZIALI:"
-    echo "- File processati prima dell'interruzione: $((MOVED + SKIPPED + ERRORS + DUPLICATES_FOUND))"
-    echo "- File spostati con successo: $MOVED"
-    echo "- File saltati (data non valida): $SKIPPED"
-    echo "- File duplicati trovati e rinominati: $DUPLICATES_FOUND"
-    echo "- Errori: $ERRORS"
+    echo "PARTIAL STATISTICS:"
+    echo "- Files processed before interruption: $((MOVED + SKIPPED + ERRORS + DUPLICATES_FOUND))"
+    echo "- Files moved successfully: $MOVED"
+    echo "- Files skipped: $SKIPPED"
+    echo "- Duplicate files found and renamed: $DUPLICATES_FOUND"
+    echo "- Errors: $ERRORS"
     
     if [ ${#DUPLICATE_FILES[@]} -gt 0 ]; then
         echo ""
-        echo "FILE DUPLICATI TROVATI E RINOMINATI:"
+        echo "DUPLICATE FILES FOUND AND RENAMED:"
         for dup_file in "${DUPLICATE_FILES[@]}"; do
             echo "  • $dup_file"
         done
     fi
     
     echo ""
-    echo "📁 Checkpoint salvato in: $CHECKPOINT_FILE"
-    echo "📝 Log file processati: $PROCESSED_FILES_LOG"
+    echo "📁 Checkpoint saved to: $CHECKPOINT_FILE"
+    echo "📝 Processed files log: $PROCESSED_FILES_LOG"
     echo ""
-    echo "Per riprendere dal punto di interruzione, rilancia:"
+    echo "To resume from interruption point, run again:"
     echo "$0 \"$SOURCE_DIR\" \"$DEST_DIR\""
     echo ""
-    echo "Per ricominciare da capo, cancella prima i file di checkpoint:"
+    echo "To restart from scratch, first delete checkpoint files:"
     echo "rm -f \"$CHECKPOINT_FILE\" \"$PROCESSED_FILES_LOG\""
     
     exit 1
 }
 
-# Cattura segnali di interruzione
+# Capture interruption signals
 trap cleanup INT TERM
 
-# Modalità dry-run
+# Dry-run mode
 if [ "$DRY_RUN" = true ]; then
-    echo "=== MODALITÀ DRY-RUN ATTIVA ==="
-    echo "Nessuna modifica verrà effettuata realmente"
+    echo "=== DRY-RUN MODE ACTIVE ==="
+    echo "No changes will be made"
     echo ""
 fi
 
-echo "Inizio organizzazione file da $SOURCE_DIR a $DEST_DIR"
-echo "Scansione ricorsiva di tutte le sottodirectory..."
-echo "Esclusione file con pattern *_DUP.*"
+echo "Starting file organization from $SOURCE_DIR to $DEST_DIR"
+echo "Recursive scanning of all subdirectories..."
+echo "Excluding files with pattern *_DUP.*"
 echo "----------------------------------------"
 
-# Carica checkpoint se esistente
+# Load checkpoint if existing
 load_checkpoint
 
-# Conta i file da processare (solo se non in dry-run per non rallentare)
-if [ "$DRY_RUN" = false ]; then
-    echo "Conteggio file da processare..."
-    total_files_to_process=$(find "$SOURCE_DIR" -type f \( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" -o -iname "*.gif" -o -iname "*.bmp" -o -iname "*.tiff" -o -iname "*.mp4" -o -iname "*.avi" -o -iname "*.mov" -o -iname "*.mkv" -o -iname "*.wmv" -o -iname "*.mp3" -o -iname "*.wav" -o -iname "*.flac" \) ! -name "*_DUP.*" | wc -l)
-    
-    excluded_files=$(find "$SOURCE_DIR" -type f -name "*_DUP.*" | wc -l)
-    
-    echo "File multimediali trovati: $total_files_to_process"
-    if [ "$excluded_files" -gt 0 ]; then
-        echo "File _DUP.* esclusi: $excluded_files"
-    fi
-    echo "----------------------------------------"
-fi
+# Count files to process
+echo "Counting files to process..."
+total_files_to_process=$(find "$SOURCE_DIR" -type f \( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" -o -iname "*.gif" -o -iname "*.bmp" -o -iname "*.tiff" -o -iname "*.mp4" -o -iname "*.avi" -o -iname "*.mov" -o -iname "*.mkv" -o -iname "*.wmv" -o -iname "*.mp3" -o -iname "*.wav" -o -iname "*.flac" \) ! -name "*_DUP.*" | wc -l)
 
-# Crea file temporanei per i contatori in dry-run
-if [ "$DRY_RUN" = true ]; then
-    TEMP_COUNTERS="/tmp/organize_counters_$"
-    echo "MOVED=0" > "$TEMP_COUNTERS"
-    echo "SKIPPED=0" >> "$TEMP_COUNTERS"
-    echo "ERRORS=0" >> "$TEMP_COUNTERS"
-    echo "DUPLICATES_FOUND=0" >> "$TEMP_COUNTERS"
-    echo "DUPLICATE_FILES=()" >> "$TEMP_COUNTERS"
-fi
+excluded_files=$(find "$SOURCE_DIR" -type f -name "*_DUP.*" | wc -l)
 
-# Trova tutti i file multimediali ricorsivamente, escludendo i file _DUP
-while IFS= read -r -d '' file; do
+echo "Multimedia files found: $total_files_to_process"
+if [ "$excluded_files" -gt 0 ]; then
+    echo "Files _DUP.* excluded: $excluded_files"
+fi
+echo "----------------------------------------"
+
+# Create array with all files to process (avoids pipe subshell)
+echo "Creating list of files to process..."
+mapfile -t files_array < <(find "$SOURCE_DIR" -type f \( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" -o -iname "*.gif" -o -iname "*.bmp" -o -iname "*.tiff" -o -iname "*.mp4" -o -iname "*.avi" -o -iname "*.mov" -o -iname "*.mkv" -o -iname "*.wmv" -o -iname "*.mp3" -o -iname "*.wav" -o -iname "*.flac" \) ! -name "*_DUP.*")
+
+echo "Starting processing of ${#files_array[@]} files..."
+echo "----------------------------------------"
+
+# Process each file in array (NOT in subshell)
+for file in "${files_array[@]}"; do
     
-    # Controlla se il file è già stato processato
+    # Check if file has already been processed
     if is_file_processed "$file"; then
         if [ "$DRY_RUN" = false ]; then
-            # In modalità normale, salta i file già processati silenziosamente
+            # In normal mode, skip already processed files silently
             continue
         fi
     fi
     
     filename=$(basename "$file")
     relative_path="${file#$SOURCE_DIR/}"
-    echo "Processando: $relative_path"
+    echo "Processing: $relative_path"
     
-    # Estrai data dal nome file - diversi formati possibili con prefissi/suffissi
+    # Extract date from filename - various formats with prefixes/suffixes
     year=""
     month=""
     
-    # Formato: [prefisso_]YYYY-MM-DD[_suffisso] o [prefisso_]YYYY_MM_DD[_suffisso] o [prefisso_]YYYYMMDD[_suffisso]
+    # Format: [prefix_]YYYY-MM-DD[_suffix] or [prefix_]YYYY_MM_DD[_suffix] or [prefix_]YYYYMMDD[_suffix]
     if [[ $filename =~ ([^0-9]*)([0-9]{4})[-_]?([0-9]{2})[-_]?([0-9]{2})(.*)$ ]]; then
         year="${BASH_REMATCH[2]}"
         month="${BASH_REMATCH[3]}"
-        echo "  Data trovata (YYYY-MM-DD): $year-$month"
-    # Formato: [prefisso_]DD-MM-YYYY[_suffisso] o [prefisso_]DD_MM_YYYY[_suffisso] o [prefisso_]DD/MM/YYYY[_suffisso]
+        echo "  Date found (YYYY-MM-DD): $year-$month"
+    # Format: [prefix_]DD-MM-YYYY[_suffix] or [prefix_]DD_MM_YYYY[_suffix] or [prefix_]DD/MM/YYYY[_suffix]
     elif [[ $filename =~ ([^0-9]*)([0-9]{1,2})[-_/]([0-9]{1,2})[-_/]([0-9]{4})(.*)$ ]]; then
         potential_year="${BASH_REMATCH[4]}"
         potential_month="${BASH_REMATCH[3]}"
-        # Rimuovi zeri iniziali e assicurati che il mese sia valido (01-12)
+        # Remove leading zeros and ensure month is valid (01-12)
         potential_month=$((10#$potential_month))
         if [ "$potential_month" -ge 1 ] && [ "$potential_month" -le 12 ]; then
             year="$potential_year"
             month=$(printf "%02d" $potential_month)
-            echo "  Data trovata (DD-MM-YYYY): $year-$month"
+            echo "  Date found (DD-MM-YYYY): $year-$month"
         else
             year=""
             month=""
         fi
-    # Formato: [prefisso_]MM-DD-YYYY[_suffisso] (formato americano)
+    # Format: [prefix_]MM-DD-YYYY[_suffix] (American format)
     elif [[ $filename =~ ([^0-9]*)([0-9]{1,2})[-_/]([0-9]{1,2})[-_/]([0-9]{4})(.*)$ ]]; then
         potential_year="${BASH_REMATCH[4]}"
         potential_month="${BASH_REMATCH[2]}"
-        # Rimuovi zeri iniziali e assicurati che il mese sia valido (01-12)
+        # Remove leading zeros and ensure month is valid (01-12)
         potential_month=$((10#$potential_month))
         if [ "$potential_month" -ge 1 ] && [ "$potential_month" -le 12 ]; then
             year="$potential_year"
             month=$(printf "%02d" $potential_month)
-            echo "  Data trovata (MM-DD-YYYY): $year-$month"
+            echo "  Date found (MM-DD-YYYY): $year-$month"
         else
             year=""
             month=""
         fi
-    # Formato con timestamp: [prefisso_]YYYY[MM[DD[_HHMMSS]]][_suffisso]
+    # Format with timestamp: [prefix_]YYYY[MM[DD[_HHMMSS]]][_suffix]
     elif [[ $filename =~ ([^0-9]*)([0-9]{4})([0-9]{2})([0-9]{2})[^0-9]*(.*) ]]; then
         year="${BASH_REMATCH[2]}"
         month="${BASH_REMATCH[3]}"
-        echo "  Data trovata (YYYYMMDD): $year-$month"
-    # Formato ISO con prefisso/suffisso: [prefisso_]YYYY[MM][_suffisso]
+        echo "  Date found (YYYYMMDD): $year-$month"
+    # ISO format with prefix/suffix: [prefix_]YYYY[MM][_suffix]
     elif [[ $filename =~ ([^0-9]*)([0-9]{4})[^0-9]*([0-9]{2})[^0-9]*(.*) ]]; then
         potential_year="${BASH_REMATCH[2]}"
         potential_month="${BASH_REMATCH[3]}"
-        # Rimuovi zeri iniziali e valida il mese
+        # Remove leading zeros and validate month
         potential_month=$((10#$potential_month))
         if [ "$potential_month" -ge 1 ] && [ "$potential_month" -le 12 ]; then
             year="$potential_year"
             month=$(printf "%02d" $potential_month)
-            echo "  Data trovata (YYYY-MM): $year-$month"
+            echo "  Date found (YYYY-MM): $year-$month"
         fi
     fi
     
-    # Se non riesci a estrarre la data, prova con i metadati del file
+    # If unable to extract date, try file metadata
     if [ -z "$year" ] || [ -z "$month" ]; then
-        # Usa exiftool se disponibile (solo se non in dry-run o per test)
+        # Use exiftool if available (only if not in dry-run or for testing)
         if command -v exiftool >/dev/null 2>&1 && [ "$DRY_RUN" = false ]; then
             date_taken=$(exiftool -DateTimeOriginal -d "%Y-%m" -T "$file" 2>/dev/null)
             if [ -n "$date_taken" ] && [ "$date_taken" != "-" ]; then
                 year=$(echo "$date_taken" | cut -d'-' -f1)
                 month=$(echo "$date_taken" | cut -d'-' -f2)
-                echo "  Data da metadati EXIF: $year-$month"
+                echo "  Date from EXIF metadata: $year-$month"
             fi
         elif [ "$DRY_RUN" = true ]; then
-            echo "  [DRY-RUN] Proverei a estrarre data da metadati EXIF"
+            echo "  [DRY-RUN] Would try to extract date from EXIF metadata"
         fi
         
-        # Se ancora non hai la data, usa la data di modifica del file
+        # If still no date, use file modification date
         if [ -z "$year" ] || [ -z "$month" ]; then
             if [ "$DRY_RUN" = false ]; then
                 file_date=$(stat -c %Y "$file")
                 year=$(date -d "@$file_date" +%Y)
                 month=$(date -d "@$file_date" +%m)
             else
-                # In dry-run, simula una data di modifica
+                # In dry-run, simulate modification date
                 year=$(date +%Y)
                 month=$(date +%m)
             fi
-            echo "  Usando data di modifica: $year-$month"
+            echo "  Using modification date: $year-$month"
         fi
     fi
     
-    # Valida anno e mese
+    # Validate year and month
     if [ -n "$year" ] && [ -n "$month" ] && [ "$year" -ge 1990 ] && [ "$year" -le $(date +%Y) ]; then
-        # Rimuovi zeri iniziali dal mese per evitare problemi con printf octal
+        # Remove leading zeros from month to avoid octal printf issues
         month_num=$((10#$month))
         if [ "$month_num" -ge 1 ] && [ "$month_num" -le 12 ]; then
-            # Crea directory destinazione
+            # Create destination directory
             month_formatted=$(printf "%02d" $month_num)
             dest_dir="$DEST_DIR/$year/$month_formatted"
             
             if [ "$DRY_RUN" = false ]; then
                 mkdir -p "$dest_dir"
             else
-                echo "  [DRY-RUN] Creerei directory: $dest_dir"
+                echo "  [DRY-RUN] Would create directory: $dest_dir"
             fi
             
             dest_file="$dest_dir/$filename"
             
-            # CONTROLLO CRITICO: Verifica se il file è già nella posizione corretta
+            # CRITICAL CHECK: Verify if file is already in correct position
             if [ "$DRY_RUN" = false ]; then
                 source_real=$(realpath "$file" 2>/dev/null)
                 dest_real=$(realpath "$dest_file" 2>/dev/null)
                 
-                # Se i percorsi reali sono identici, il file è già al posto giusto
+                # If real paths are identical, file is already in right place
                 if [ -n "$source_real" ] && [ -n "$dest_real" ] && [ "$source_real" = "$dest_real" ]; then
-                    echo "  File già nella posizione corretta, saltato"
+                    echo "  File already in correct position, skipped"
                     ((SKIPPED++))
                     mark_file_processed "$file"
                     save_checkpoint
@@ -332,9 +327,9 @@ while IFS= read -r -d '' file; do
                 fi
             fi
             
-            # Controlla se il file esiste già nella destinazione
+            # Check if file already exists in destination
             if [ -f "$dest_file" ] || ( [ "$DRY_RUN" = true ] && [ -f "$dest_file" ] ); then
-                # Simula controllo file esistente anche in dry-run
+                # Simulate file existence check in dry-run too
                 file_exists=false
                 files_identical=false
                 
@@ -344,21 +339,21 @@ while IFS= read -r -d '' file; do
                         files_identical=true
                     fi
                 elif [ "$DRY_RUN" = true ]; then
-                    # In dry-run, simula casualmente esistenza e identità file per demo
-                    if (( RANDOM % 4 == 0 )); then  # 25% probabilità file esistente
+                    # In dry-run, randomly simulate file existence for demo
+                    if (( RANDOM % 4 == 0 )); then  # 25% probability of existing file
                         file_exists=true
-                        if (( RANDOM % 2 == 0 )); then  # 50% probabilità file identico
+                        if (( RANDOM % 2 == 0 )); then  # 50% probability of identical file
                             files_identical=true
                         fi
                     fi
                 fi
                 
                 if [ "$file_exists" = true ] && [ "$files_identical" = true ]; then
-                    echo "  File identico trovato nella destinazione, rinomino sorgente con _DUP"
+                    echo "  Identical file found in destination, renaming source with _DUP"
                     base_name="${filename%.*}"
                     extension="${filename##*.}"
                     
-                    # Trova un nome libero per il duplicato nella directory sorgente
+                    # Find free name for duplicate in source directory
                     dup_counter=1
                     dup_name="${base_name}_DUP"
                     if [ -n "$extension" ]; then
@@ -381,28 +376,28 @@ while IFS= read -r -d '' file; do
                             ((dup_counter++))
                         done
                         
-                        # Rinomina il file nella directory sorgente
+                        # Rename file in source directory
                         if mv "$file" "$dup_path"; then
-                            echo "  File rinominato come duplicato: $dup_filename"
+                            echo "  File renamed as duplicate: $dup_filename"
                             DUPLICATE_FILES+=("$dup_filename")
                             ((DUPLICATES_FOUND++))
                             mark_file_processed "$file"
                             save_checkpoint
                         else
-                            echo "  ERRORE nel rinominare il duplicato"
+                            echo "  ERROR renaming duplicate"
                             ((ERRORS++))
                             mark_file_processed "$file"
                             save_checkpoint
                         fi
                     else
-                        echo "  [DRY-RUN] Rinominerei file come duplicato: $dup_filename"
+                        echo "  [DRY-RUN] Would rename file as duplicate: $dup_filename"
                         DUPLICATE_FILES+=("$dup_filename")
                         ((DUPLICATES_FOUND++))
                     fi
                     continue
                     
                 elif [ "$file_exists" = true ]; then
-                    # File diverso con stesso nome - crea versione numerata nella destinazione
+                    # Different file with same name - create numbered version in destination
                     counter=1
                     base_name="${filename%.*}"
                     extension="${filename##*.}"
@@ -414,34 +409,34 @@ while IFS= read -r -d '' file; do
                     fi
                     
                     dest_file="$dest_dir/${base_name}_$counter.$extension"
-                    echo "  File diverso con stesso nome, rinominato in: ${base_name}_$counter.$extension"
+                    echo "  Different file with same name, renamed to: ${base_name}_$counter.$extension"
                     if [ "$DRY_RUN" = true ]; then
-                        echo "  [DRY-RUN] Creerei file con nome modificato"
+                        echo "  [DRY-RUN] Would create file with modified name"
                     fi
                 fi
             fi
             
-            # Sposta il file
+            # Move the file
             if [ "$DRY_RUN" = false ]; then
                 if mv "$file" "$dest_file"; then
-                    echo "  Spostato in: $dest_dir/"
+                    echo "  Moved to: $dest_dir/"
                     ((MOVED++))
                     mark_file_processed "$file"
                     save_checkpoint
                 else
-                    echo "  ERRORE nello spostamento"
+                    echo "  ERROR in movement"
                     ((ERRORS++))
                     mark_file_processed "$file"
                     save_checkpoint
                 fi
             else
-                echo "  [DRY-RUN] Sposterei in: $dest_dir/"
+                echo "  [DRY-RUN] Would move to: $dest_dir/"
                 ((MOVED++))
             fi
         else
-            echo "  Data non valida estratta: $year-$month_formatted, saltato"
+            echo "  Invalid date extracted: $year-$month_formatted, skipped"
             if [ "$DRY_RUN" = true ]; then
-                echo "  [DRY-RUN] File non verrebbe spostato"
+                echo "  [DRY-RUN] File would not be moved"
             fi
             ((SKIPPED++))
             mark_file_processed "$file"
@@ -450,9 +445,9 @@ while IFS= read -r -d '' file; do
             fi
         fi
     else
-        echo "  Data non valida estratta: $year-$month, saltato"
+        echo "  Invalid date extracted: $year-$month, skipped"
         if [ "$DRY_RUN" = true ]; then
-            echo "  [DRY-RUN] File non verrebbe spostato"
+            echo "  [DRY-RUN] File would not be moved"
         fi
         ((SKIPPED++))
         mark_file_processed "$file"
@@ -463,44 +458,44 @@ while IFS= read -r -d '' file; do
     
     echo ""
     
-    # Mostra progresso ogni 50 file processati
+    # Show progress every 50 processed files
     total_processed=$((MOVED + SKIPPED + ERRORS + DUPLICATES_FOUND))
     if (( total_processed % 50 == 0 )) && (( total_processed > 0 )); then
-        echo "--- PROGRESSO: $total_processed file processati ---"
-        echo "    (Spostati: $MOVED | Saltati: $SKIPPED | Duplicati: $DUPLICATES_FOUND | Errori: $ERRORS)"
+        echo "--- PROGRESS: $total_processed files processed ---"
+        echo "    (Moved: $MOVED | Skipped: $SKIPPED | Duplicates: $DUPLICATES_FOUND | Errors: $ERRORS)"
     fi
 done
 
 echo "----------------------------------------"
 
-# Report finale
+# Final report
 if [ "$DRY_RUN" = true ]; then
-    echo "=== REPORT DRY-RUN COMPLETATO ==="
+    echo "=== DRY-RUN REPORT COMPLETED ==="
     echo ""
-    echo "RIEPILOGO SIMULAZIONE:"
-    echo "- File che verrebbero spostati: $MOVED"
-    echo "- File che verrebbero saltati: $SKIPPED"
-    echo "- File duplicati che verrebbero rinominati: $DUPLICATES_FOUND"
-    echo "- Errori che si verificherebbero: $ERRORS"
-    echo "- Totale file che verrebbero processati: $((MOVED + SKIPPED + DUPLICATES_FOUND + ERRORS))"
+    echo "SIMULATION SUMMARY:"
+    echo "- Files that would be moved: $MOVED"
+    echo "- Files that would be skipped: $SKIPPED"
+    echo "- Duplicate files that would be renamed: $DUPLICATES_FOUND"
+    echo "- Errors that would occur: $ERRORS"
+    echo "- Total files that would be processed: $((MOVED + SKIPPED + DUPLICATES_FOUND + ERRORS))"
     
     if [ ${#DUPLICATE_FILES[@]} -gt 0 ]; then
         echo ""
-        echo "FILE DUPLICATI CHE VERREBBERO RINOMINATI:"
+        echo "DUPLICATE FILES THAT WOULD BE RENAMED:"
         for dup_file in "${DUPLICATE_FILES[@]}"; do
             echo "  • $dup_file"
         done
     fi
     
     echo ""
-    echo "STRUTTURA DIRECTORY CHE VERREBBE CREATA:"
+    echo "DIRECTORY STRUCTURE THAT WOULD BE CREATED:"
     
-    # Simula la struttura delle directory che verrebbero create
-    temp_structure="/tmp/dry_run_structure_$"
+    # Simulate directory structure that would be created
+    temp_structure="/tmp/dry_run_structure_$$"
     find "$SOURCE_DIR" -type f \( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" -o -iname "*.gif" -o -iname "*.bmp" -o -iname "*.tiff" -o -iname "*.mp4" -o -iname "*.avi" -o -iname "*.mov" -o -iname "*.mkv" -o -iname "*.wmv" -o -iname "*.mp3" -o -iname "*.wav" -o -iname "*.flac" \) ! -name "*_DUP.*" | while read -r file; do
         filename=$(basename "$file")
         
-        # Ripeti la logica di estrazione data (versione semplificata)
+        # Repeat date extraction logic (simplified version)
         year=""
         month=""
         
@@ -552,72 +547,72 @@ if [ "$DRY_RUN" = true ]; then
     fi
     
     echo ""
-    echo "Per eseguire realmente le modifiche, rilancia senza --dry-run:"
+    echo "To actually execute changes, run again without --dry-run:"
     echo "$0 \"$SOURCE_DIR\" \"$DEST_DIR\""
     
 else
     echo "=========================================="
-    echo "ORGANIZZAZIONE COMPLETATA CON SUCCESSO!"
+    echo "ORGANIZATION COMPLETED SUCCESSFULLY!"
     echo "=========================================="
     echo ""
-    echo "STATISTICHE FINALI:"
-    echo "- File spostati con successo: $MOVED"
-    echo "- File saltati (data non valida o già posizionati): $SKIPPED" 
-    echo "- File duplicati trovati e rinominati: $DUPLICATES_FOUND"
-    echo "- Errori verificatisi: $ERRORS"
-    echo "- Totale file processati: $((MOVED + SKIPPED + ERRORS + DUPLICATES_FOUND))"
+    echo "FINAL STATISTICS:"
+    echo "- Files moved successfully: $MOVED"
+    echo "- Files skipped (invalid date or already positioned): $SKIPPED" 
+    echo "- Duplicate files found and renamed: $DUPLICATES_FOUND"
+    echo "- Errors occurred: $ERRORS"
+    echo "- Total files processed: $((MOVED + SKIPPED + ERRORS + DUPLICATES_FOUND))"
     
-    # Calcola percentuali se ci sono file processati
+    # Calculate percentages if there are processed files
     total_files=$((MOVED + SKIPPED + ERRORS + DUPLICATES_FOUND))
     if [ "$total_files" -gt 0 ]; then
         moved_percent=$(( MOVED * 100 / total_files ))
         duplicates_percent=$(( DUPLICATES_FOUND * 100 / total_files ))
         echo ""
-        echo "PERCENTUALI:"
-        echo "- File spostati correttamente: ${moved_percent}%"
+        echo "PERCENTAGES:"
+        echo "- Files moved correctly: ${moved_percent}%"
         if [ "$DUPLICATES_FOUND" -gt 0 ]; then
-            echo "- File duplicati trovati: ${duplicates_percent}%"
+            echo "- Duplicate files found: ${duplicates_percent}%"
         fi
     fi
     
     if [ ${#DUPLICATE_FILES[@]} -gt 0 ]; then
         echo ""
-        echo "📋 DETTAGLIO FILE DUPLICATI RINOMINATI ($DUPLICATES_FOUND totali):"
+        echo "📋 DETAIL OF DUPLICATE FILES RENAMED ($DUPLICATES_FOUND total):"
         for dup_file in "${DUPLICATE_FILES[@]}"; do
             echo "  • $dup_file"
         done
         echo ""
-        echo "NOTA: I file duplicati sono rimasti nella directory sorgente"
-        echo "      con il suffisso _DUP per evitare perdite di dati"
+        echo "NOTE: Duplicate files remained in source directory"
+        echo "      with _DUP suffix to avoid data loss"
     fi
     
     if [ "$ERRORS" -gt 0 ]; then
         echo ""
-        echo "⚠️  ATTENZIONE: Si sono verificati $ERRORS errori durante l'operazione"
-        echo "   Controlla i messaggi sopra per i dettagli"
+        echo "⚠️  WARNING: $ERRORS errors occurred during operation"
+        echo "   Check messages above for details"
     fi
     
     if [ "$MOVED" -eq 0 ] && [ "$DUPLICATES_FOUND" -eq 0 ]; then
         echo ""
-        echo "ℹ️  Nessun file è stato spostato. Possibili cause:"
-        echo "   • Tutti i file hanno date non riconoscibili"
-        echo "   • Tutti i file sono già nella destinazione corretta"
-        echo "   • La directory sorgente non contiene file multimediali"
-        echo "   • Tutti i file multimediali sono già stati rinominati con _DUP"
+        echo "ℹ️  No files were moved. Possible causes:"
+        echo "   • All files have unrecognizable dates"
+        echo "   • All files are already in correct destination"
+        echo "   • Source directory contains no multimedia files"
+        echo "   • All multimedia files have already been renamed with _DUP"
     fi
     
-    # Mostra riepilogo sottodirectory processate
+    # Show summary of processed subdirectories
     if [ "$MOVED" -gt 0 ] || [ "$DUPLICATES_FOUND" -gt 0 ]; then
         echo ""
-        echo "📁 RIEPILOGO DIRECTORY PROCESSATE:"
+        echo "📁 PROCESSED DIRECTORIES SUMMARY:"
         find "$SOURCE_DIR" -type f \( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" -o -iname "*.gif" -o -iname "*.bmp" -o -iname "*.tiff" -o -iname "*.mp4" -o -iname "*.avi" -o -iname "*.mov" -o -iname "*.mkv" -o -iname "*.wmv" -o -iname "*.mp3" -o -iname "*.wav" -o -iname "*.flac" \) ! -name "*_DUP.*" -printf '%h\n' | sort | uniq -c | sort -nr | head -10 | while read count dir; do
             relative_dir="${dir#$SOURCE_DIR}"
             [ -z "$relative_dir" ] && relative_dir="/"
-            echo "  $count file da: $relative_dir"
+            echo "  $count files from: $relative_dir"
         done
     fi
     
-    # Pulizia file di checkpoint al completamento
+    # Clean checkpoint files upon completion
     if [ -f "$CHECKPOINT_FILE" ]; then
         rm -f "$CHECKPOINT_FILE"
     fi
@@ -625,8 +620,8 @@ else
         rm -f "$PROCESSED_FILES_LOG"
     fi
     echo ""
-    echo "🎉 File di checkpoint puliti - operazione completata!"
+    echo "🎉 Checkpoint files cleaned - operation completed!"
 fi
 
-# Rimuovi il trap alla fine
+# Remove trap at the end
 trap - INT TERM
